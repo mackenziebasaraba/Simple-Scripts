@@ -1,0 +1,170 @@
+#!/bin/bash
+
+QUALITY_TYPE="default"
+RESIZE_OPTION=""
+INPUT_TARGET=""
+
+usage() {
+    echo "Usage: $0 <output_format> [-q <quality>] [-r <resize>] [-i <input>]"
+    echo "  <output_format>: Format to convert to (e.g., jpg, png, avif, webp)"
+    echo "  -q <quality>:    Quality setting, e.g., 90 or lossless [Optional]"
+    echo "  -r <resize>:     Resize geometry, e.g., 800x800 or 50% [Optional]"
+    echo "  -i <input>:      Input file or folder (processes only this target) [Optional]"
+    exit 1
+}
+
+check_dependencies() {
+    if ! command -v mogrify &>/dev/null; then
+        echo "Error: 'mogrify' command not found. Please install ImageMagick."
+        exit 1
+    fi
+}
+
+parse_arguments() {
+    if [ $# -lt 1 ]; then
+        usage
+    fi
+
+    OUTPUT_FORMAT=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -q|--quality)
+                shift
+                if [ -z "$1" ]; then
+                    echo "Error: -q requires a value (e.g. 90 or lossless)"
+                    exit 1
+                fi
+                QUALITY_TYPE="$1"
+                ;;
+            -r|--resize)
+                shift
+                if [ -z "$1" ]; then
+                    echo "Error: -r requires a resize value (e.g. 800x800, 800x, x800, or 50%)"
+                    exit 1
+                fi
+                RESIZE_OPTION="-colorspace RGB -resize $1 -colorspace sRGB"
+                ;;
+            -i|--input)
+                shift
+                if [ -z "$1" ]; then
+                    echo "Error: -i requires a file or directory as input"
+                    exit 1
+                fi
+                INPUT_TARGET="$1"
+                ;;
+            -*)
+                echo "Unknown option: $1"
+                usage
+                ;;
+            *)
+                if [ -z "$OUTPUT_FORMAT" ]; then
+                    OUTPUT_FORMAT="$1"
+                else
+                    echo "Unexpected argument: $1"
+                    usage
+                fi
+                ;;
+        esac
+        shift
+    done
+
+    if [[ -z "$OUTPUT_FORMAT" ]]; then
+        echo "Error: No output format specified."
+        usage
+    fi
+}
+
+get_quality_flags() {
+    local format="$1"
+    local quality="$2"
+
+    case "$quality" in
+        lossless)
+            case "$format" in
+                webp) echo "-define webp:lossless=true" ;;
+                avif) echo "-define avif:lossless=true" ;;
+                png) echo "-define png:compression-level=9" ;;
+                *) echo "" ;;
+            esac
+            ;;
+        [0-9]*)
+            case "$format" in
+                jpg|heif|webp|avif) echo "-quality $quality" ;;
+                png) echo "-define png:compression-level=9" ;;
+                *) echo "" ;;
+            esac
+            ;;
+        *) echo "" ;;
+    esac
+}
+
+convert_images() {
+    local input_formats=("$@")
+    echo "Target format: $OUTPUT_FORMAT"
+    echo "Input formats: ${input_formats[*]}"
+    echo "Quality option: ${QUALITY_OPTION:-(default)}"
+    echo "Resize option: ${RESIZE_OPTION:-(none)}"
+    echo "Input target: ${INPUT_TARGET:-(all files)}"
+
+    if [[ -n "$INPUT_TARGET" ]]; then
+        if [[ -f "$INPUT_TARGET" ]]; then
+            echo "Processing single file: $INPUT_TARGET"
+            process_image "$INPUT_TARGET"
+            return
+        elif [[ -d "$INPUT_TARGET" ]]; then
+            echo "Processing files in folder: $INPUT_TARGET"
+            for img in "$INPUT_TARGET"/*; do
+                if [[ -f "$img" ]]; then
+                    process_image "$img"
+                fi
+            done
+            return
+        else
+            echo "Error: Input target '$INPUT_TARGET' is neither a file nor a directory."
+            exit 1
+        fi
+    fi
+
+    # Process all image files if no input target is given
+    for ext in "${input_formats[@]}"; do
+        find . -type f -iname "*.$ext" -print0 | while IFS= read -r -d '' img; do
+        process_image "$img"
+    done
+done
+}
+
+process_image() {
+    local img="$1"
+    local base_name
+    local output_file
+
+    base_name=$(basename "$img")
+    output_file="${img%.*}.$OUTPUT_FORMAT"
+
+    echo "Converting: $img -> $output_file"
+    if convert "$img" $RESIZE_OPTION $QUALITY_OPTION "$output_file"; then
+        echo "Converted: $img"
+        rm -v "$img"
+    else
+        echo "Conversion failed for: $img" >> conversion_errors.log
+    fi
+}
+
+main() {
+    check_dependencies
+    parse_arguments "$@"
+    QUALITY_OPTION=$(get_quality_flags "$OUTPUT_FORMAT" "$QUALITY_TYPE")
+
+    ALL_FORMATS=("jpg" "png" "webp" "heif" "avif")
+    INPUT_FORMATS=()
+    for ext in "${ALL_FORMATS[@]}"; do
+        if [ "$ext" != "$OUTPUT_FORMAT" ]; then
+            INPUT_FORMATS+=("$ext")
+        fi
+    done
+
+    convert_images "${INPUT_FORMATS[@]}"
+    echo "Conversion complete."
+}
+
+main "$@"
