@@ -1,0 +1,19 @@
+#!/bin/sh
+
+# Copy frequently used AI prompts through dmenu.
+# Prompts are stored in ~/.local/share/prompts.csv.
+
+prompts=$(cut -d ';' -f1,2 ~/.local/share/prompts.csv)
+
+chosen=$(echo "$prompts" | cut -d ';' -f1 | dmenu -i -l 30)
+
+[ -z "$chosen" ] && exit
+
+prompt=$(echo "$prompts" | grep -m 1 "$chosen" | cut -d ';' -f2)
+
+if [ -n "$1" ]; then
+    xdotool type "$prompt"
+else
+    printf "%s" "$prompt" | xclip -selection clipboard
+    notify-send "'$chosen' copied to clipboard." &
+fi
